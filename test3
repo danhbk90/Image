@@ -1,0 +1,290 @@
+// Atamakazu =o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=
+//
+// Atamakazu Sample CPP : Copyright(C) 2014-2015 NEC Solution Innovators, Ltd. All Rights Reserved.
+//
+// =o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=
+
+#include "atkSample.h"
+#include "atamakazu.h"
+
+CvVideoWriter* videoWriter;
+//20150310 add
+// videoWriter用
+IplImage iplVideo;
+// 入退場別ベクトル（現在のフレーム）
+double *inVectorsTmp;
+double *outVectorsTmp;
+// エリアサイズ（初期化処理でエリアの最大ピクセル数をカウントする。以降、エリアの有無もここで判断）
+int *areaSizesTmp;
+// ROI
+cv::Rect roid;
+//20150310 add end
+//	Main関数
+int main(int argc, char *argv[])
+{
+	// initialize /////////////////////////////
+	starttime = 0;
+
+	// コマンドライン引数処理
+	cv::CommandLineParser cmd(argc, argv,
+			// 注意：ヘルプメッセージに日本語は使えません。コンソールで変な動きをします。
+			"{c | camera  | false    | use camera }"
+			"{f | file    | test.avi | use movie file (file path). }"
+			"{a | area    | test.bmp | count area image file path. }"
+			"{u | unit    | test     | setting name of pixels per moving each area. }"
+			"{r | resize  | 2        | resize area image and frame. }"
+			"{n | noise   | 5        | noise pixels per area and frame. }"
+			"{b | bgs     | none     | background subtractor. }"
+			"{w | winSize | 15       | window size for detection of pixel moving. }"
+			"{s | step    | 5        | step for detection of pixel moving. }"			"{i | minDist | 3        | minimum direction. }"
+			"{x | maxDist | 300      | maximum direction. }"
+			"{h | help    | false    | show this message. }");
+	if(cmd.get<bool>("help")){
+		cerr << "Usage : atkSample [options]" << endl ;
+		cerr << "利用可能なオプション:" << endl;
+		cerr << "  -c, --camera=[false}    カメラを使用します。" << endl ;
+		cerr << "  -f, --file=[test.avi]   入力ビデオのファイルパスを指定します。" << endl ;
+		cerr << "  -a, --area=[test.bmp]   人を検出／カウントする領域を設定したグレースケールの画像ファイルのパスを指定します。対象領域として利用可能な階調は5～255のうち、5で割りきれる階調であることが必要です。" << endl ;
+		cerr << "  -u, --unit=[test]       1エリアの一人あたりのピクセル数が記述された設定ファイルから読み出したい設定名称を指定します。設定ファイルは ./log/MovingUnit.ini から読み込みます。" << endl ;
+		cerr << "  -r, --resize=[2]        atamakazuに渡す領域設定画像とフレーム画像のサイズを縮小します（幅／この値、高さ／この値）。縮小はこのサンプルアプリで行います。" << endl ;
+		cerr << "  -n, --noise=[5]         1エリア、1フレームあたりでノイズと見做すピクセル数です。この値以下の場合に動体は検出されていないことと見做します。" << endl ;
+		cerr << "  -b, --bgs=[none]        背景差分の取得方法を指定します。" << endl ;
+		cerr << "  -w, --winSize=[15]      移動度検出用ウィンドウサイズを指定します。" << endl ;
+		cerr << "  -s, --step=[5]          移動度検出間隔を指定します。" << endl ;
+		cerr << "  -i, --minDist=[3]       これ以下の移動があったピクセルはノイズと見做します。" << endl ;
+		cerr << "  -x, --maxDist=[300]     これ以上の移動があったピクセルはノイズと見做します。" << endl ;
+		cerr << "  -h, --help=[false]      このヘルプを表示します。" << endl ;
+		return 0;
+	}
+
+	bool useCamera = cmd.get<bool>("camera");
+	string file = cmd.get<string>("file");
+	reduction = cmd.get<int>("resize");
+
+	// atamakazu初期化 ///////////////////////////////////////////////////////////////////////
+	string method = cmd.get<string>("bgs");
+	if (	method != "none"
+			&& method != "bgs"
+			&& method != "ad"
+			&& method != "mog"
+			&& method != "mog2"
+			&& method != "gmg"){
+		cerr << "Incorrect method" << endl;
+		return -1;
+	}
+	gAtkProp.bgsMethod = method == "mog"  ? MOG  :
+			method == "mog2" ? MOG2 :
+			method == "gmg"  ? GMG :
+			method == "ad"   ? AD :
+			method == "bgs"  ? BGS :
+									NONE;
+
+
+	// 領域設定画像
+	string areaFile = cmd.get<string>("area");
+	gAtkProp.areaImg = imread(areaFile.c_str(), CV_LOAD_IMAGE_ANYDEPTH | CV_LOAD_IMAGE_ANYCOLOR);
+	resize(gAtkProp.areaImg, gAtkProp.areaImg, Size(gAtkProp.areaImg.size().width/reduction, gAtkProp.areaImg.size().height/reduction));
+
+	// ノイズと見做すピクセル数／領域
+	gAtkProp.noise = cmd.get<int>("noise");
+	// これ以上の移動があったピクセルはノイズと見做す
+	gAtkProp.maxDistance = cmd.get<int>("maxDist");
+	// これ以下の移動があったピクセルはノイズと見做す
+	gAtkProp.minDistance = cmd.get<int>("minDist");
+	// 移動度検出用ウィンドウサイズ
+	gAtkProp.winSize = cmd.get<int>("winSize");
+	// 移動度検出間隔
+	gAtkProp.step = cmd.get<int>("step");
+
+	// 動体あたりのピクセル数
+	// 映像（カメラ）とカウント対象領域画像ファイルによって、設定を変更する必要があります。
+	// この設定は、"log/MovingUnit.ini"に書く必要があります。
+	// GetMovingUnitメソッドで"log/MovingUnit.ini"から読み込みます。
+	string unit = cmd.get<string>("unit");
+	double movingUnit[51] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+	// ファイルから読み込み
+	GetMovingUnit(unit.c_str(), movingUnit);
+
+	for(int i=0; i<51 ;i++){
+		gAtkProp.movingUnit[i] = movingUnit[i];
+	}
+
+	// atamakazu初期化実行
+	atkInitialize(gAtkProp,roid);
+
+	// キャプチャ準備
+	capture = VideoCapture();
+	if (useCamera){
+		capture.open(0);
+		capture.set(CV_CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH);
+		capture.set(CV_CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT);
+	}else{
+		capture.open(file);
+	}
+	if (!capture.isOpened()){
+		cerr << "can not open camera or video file" << endl;
+		return -1;
+	}
+
+	// initialize ////////////////////////////////////
+	capture >> frame;
+	//split frame into 2 image
+	atkFrame = cvCreateImage(Size(frame.size().width/reduction, frame.size().height/reduction), IPL_DEPTH_8U, 3);
+	//20150310 add
+	//表示結果のフレーム
+	Mat dFrame = cvCreateImage(Size(frame.size().width*2/reduction, frame.size().height/reduction), IPL_DEPTH_8U, 3);
+	//optical　flowのフレーム
+	Mat fFrame;
+	string fileName = file.substr(file.find_last_of("/\\")+1);
+	//書き込み
+	ofstream fp;
+	//出力CSVファイル
+	string outFile = "log/opticalflow_result_"+fileName+".csv";
+	//出力AVIファイル
+	string videoResuts = "log/"+fileName+".avi";
+	//CSVファイルが存在場合：削除する
+	if(!remove(outFile.c_str()))
+	{
+		cout<<outFile<<":deleted"<<endl;
+	}
+	//20150310 end
+	//capture will add extract frame
+	videoWriter = cvCreateVideoWriter(videoResuts.c_str(), CV_FOURCC('M','J','P','G'), 15, Size(frame.size().width*2/reduction, frame.size().height/reduction), 1);
+
+	starttime = atkGetTimeOfDay(0.0);
+
+	while(true){
+		//	カメラ画像取得
+		capture >> frame;
+		// 画像終了処理
+		if(frame.data == NULL){
+			cerr << "elapsed time : " << atkGetTimeOfDay(starttime) << endl;
+			// エリア別の一人当たりのピクセル数を設定するための情報を標準エラー出力に出力します。キャリブレーション用です。
+			// for movingPixcels setting.
+			int *movingPixelsTotal;
+			movingPixelsTotal = atkGetMovingPixels();
+			cerr << "movingPixcelsを設定するための、検知したエリア別の動体の総ピクセル数：" << endl;
+			for(int i=0; i < 51; i++){
+				if(movingPixelsTotal[i] == 0) continue;
+				cerr << i << ":" << movingPixelsTotal[i] << endl;
+			}
+
+			endfunc();
+			return 0;
+		}
+		//　リサイズ
+		resize(frame, frame, Size(frame.size().width/reduction, frame.size().height/reduction));
+
+		Mat dROIleft = dFrame(Rect(0,0,frame.cols,frame.rows));
+		Mat dROIright = dFrame(Rect(frame.cols,0,frame.cols,frame.rows));
+		// atamakazu用フレーム画像作成
+		atkFrame = frame.clone();
+		//	検出・カント実行
+		//20150310 change
+		atkCount(&atkFrame,fFrame);
+		//左側にセット
+		frame.copyTo(dROIleft);
+		//右側にセット
+		frame.copyTo(dROIright);
+		// 入退場カウント描画
+		char disp[256];
+		//inカウント表示
+		snprintf(disp, 256, "IN: %.5f", atkGetInCount());
+		cv::putText(dROIleft, disp, cv::Point(10, 20), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0 ), 1, CV_AA );
+		//outカウント表示
+		snprintf(disp, 256, "OUT: %.5f", atkGetOutCount());
+		cv::putText(dROIleft, disp, cv::Point(frame.size().width/2, 20), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0 ), 1, CV_AA );
+		//Frame番号を表示する
+		snprintf(disp, 256, "Frame: %d", atkGetFrameCount());
+		cv::putText(dROIleft, disp, cv::Point(frame.size().width/2,40), cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 255, 0 ), 1, CV_AA );
+		//getエリアサイズ
+		areaSizesTmp = atkGetAreaSizes();
+		// 入退場別ベクトルを取得ム
+		inVectorsTmp = atkGetinVectors();
+		outVectorsTmp = atkGetoutVectors();
+		//CSVファイルを書き込む
+		fp.open(outFile.c_str(),ios::out|ios::ate|ios::app|ios::binary);
+		fp<<atkGetFrameCount();
+		//エリアカウント
+		int count =0;
+		for(int i=0;i<51;i++)
+		{
+			if(*(areaSizesTmp+i)>0){
+			//エリアカウントする
+			count++;
+			//出エリア表示
+			snprintf(disp, 256, "Area%d:%.5f", count,*(outVectorsTmp+i));
+			cv::putText(dROIleft, disp, cv::Point(frame.size().width/2,frame.size().height-10-count*25), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0,255,0), 1, CV_AA );
+			//入エリア表示
+			snprintf(disp, 256, "Area%d:%.5f", count,*(inVectorsTmp+i));
+			cv::putText(dROIleft, disp, cv::Point(1,frame.size().height-10-count*25), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0,255, 0 ), 1, CV_AA );
+			//CSVファイルを書き込む
+			fp<<","<<*(inVectorsTmp+i)<<","<<*(outVectorsTmp+i);
+		}}
+		fp<<endl;
+		fp.close();
+		//opticalFlow動画を貼り付ける
+		Mat tmpFrom,tmpTo;
+		tmpFrom = fFrame.clone();
+		tmpTo = Mat(dROIright,roid);
+		tmpFrom.copyTo(tmpTo);
+		//かんきょう線
+		cv::rectangle(dROIright, cv::Point(roid.x,roid.y), cv::Point(roid.x+roid.width, roid.y+roid.height), cv::Scalar(0, 255, 0 ), 0.5, CV_AA);
+		// ビデオログ出力
+		iplVideo = IplImage(dFrame);
+		cvWriteFrame(videoWriter, &iplVideo);
+		//	ウィンドウ出力
+		cv::imshow("Result",dFrame);
+		// フレーム番号、入場者数、退場者数を標準出力
+		//cout << atkGetFrameCount() << "," << roundl(atkGetInCount()) << "," << roundl(atkGetOutCount()) << endl;
+		//cv::waitKey(20);
+		//20150310 change end
+	}
+	return 0;
+}
+
+
+//	終了時に呼び出される関数
+void endfunc(void)
+{
+	//	キャプチャのリリース
+	capture.release();
+
+	// イメージのリリース
+	frame.deallocate();
+	atkFrame.deallocate();
+
+	cvReleaseVideoWriter(&videoWriter);
+
+	// atamakazuが使用しているリソースのリリース
+	atkRelease();
+}
+
+double* GetMovingUnit(const char* name, double movingUnit[])
+{
+	FILE *fp = fopen("log/MovingUnit.ini", "r");
+
+	char line[1024];
+
+	while (fgets(line, 1024, fp)) {
+		char* temp = strdup(line);
+		char* type = strtok(temp, "=");
+		char* value = strtok(NULL, "=");
+
+		if (strcmp(type, name) == 0) {
+			const char* tok;
+			int count = 0;
+			for (tok = strtok(value, ","); tok && *tok; tok = strtok(NULL, ",\n"))
+			{
+				char *ends;
+
+				movingUnit[count++] = strtod(tok, &ends);
+			}
+		}
+	}
+
+	fclose(fp);
+
+	return movingUnit;
+}
+
