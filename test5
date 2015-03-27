@@ -1,0 +1,21 @@
+# Atamakazu =o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=
+# atkSample : Copyright(C) 2014-2015 NEC Solution Innovators, Ltd. All Rights Reserved.
+# =o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=o=
+
+CXX = g++
+TARGET = atkSample
+CXXFLAGS = -I/usr/include -I/usr/local/include -I/usr/local/include/opencv -I/usr/local/include/opencv2/video -I/usr/local/include/opencv2/gpu -I/usr/local/include/opencv2/legacy -L/usr/lib -L/usr/local/lib -lopencv_core -lopencv_highgui -lopencv_video -lopencv_gpu -lopencv_legacy -lglut -lGL -lGLU
+#CXXFLAGS += -I../atamakazu -L../atamakazu -latk # for libatk include. 
+CXXFLAGS += -g -O0 # for debug
+SRCS = atkSample.cpp atamakazu.cpp
+OBJS := $(SRCS:.cpp=.o)
+
+$(TARGET): $(SRCS)
+	$(CXX) $(CXXFLAGS) -o $@ $(SRCS)
+
+all: $(TARGET)
+
+clean:
+	rm -f $(TARGET) $(OBJS)
+	rm -f atkSample.csv atkSample.log log/img/* log/*.avi
+
